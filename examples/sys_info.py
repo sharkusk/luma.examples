@@ -25,6 +25,10 @@ from demo_opts import get_device
 from luma.core.render import canvas
 from PIL import ImageFont
 
+from itertools import cycle
+
+alternate_network = cycle(['eth0', 'wlan0'])
+
 try:
     import psutil
 except ImportError:
@@ -73,14 +77,16 @@ def disk_usage(dir):
     return "SD:  %s %.0f%%" \
         % (bytes2human(usage.used), usage.percent)
 
+def ip_address(iface):
+    return psutil.net_if_addrs()[iface][0].address
 
 def network(iface):
     stat = psutil.net_io_counters(pernic=True)[iface]
+
     return "%s: Tx%s, Rx%s" % \
            (iface, bytes2human(stat.bytes_sent), bytes2human(stat.bytes_recv))
 
-
-def stats(device):
+def stats(device, iface):
     # use custom font
     font_path = os.path.abspath(os.path.join(os.path.dirname(__file__),
                                 'fonts', 'C&C Red Alert [INET].ttf'))
@@ -94,17 +100,21 @@ def stats(device):
         if device.height >= 64:
             draw.text((0, 26), disk_usage('/'), font=font2, fill="white")
             try:
-                draw.text((0, 38), network('wlan0'), font=font2, fill="white")
+                draw.text((0, 38), network(iface), font=font2, fill="white")
             except KeyError:
                 # no wifi enabled/available
                 pass
 
+        try:
+	    draw.text((0, 52), ip_address(iface), font=font2, fill="white")
+        except KeyError:
+	    # no wifi enabled/available
+	    pass
 
 def main():
     while True:
-        stats(device)
+        stats(device, alternate_network.next())
         time.sleep(5)
-
 
 if __name__ == "__main__":
     try:

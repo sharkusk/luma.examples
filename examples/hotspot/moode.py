@@ -44,16 +44,30 @@ mute=0
 state=play
 """
 def moodeCurrentSong():
-    f = open('/var/local/www/currentsong.txt', 'r')
-    info = f.read()
-    f.close()
+    with open('/var/local/www/currentsong.txt', 'r') as f:
+        info = f.read()
 
     song = dict([t.split('=') for t in info.strip().split('\n')])
+
+    # Special case for radio stations, as the artist and song end up being
+    # combined in the song title.
     if song['artist'].strip() == "Radio station":
         try:
             song['artist'], song['title'] = song['title'].split(' - ')
         except:
             pass
+
+    # Url's from moode can have the following forms:
+    # http://.../image/path...
+    # image/path...
+    # /image/path...
+    # 
+    # The last two should be mapped to http://localhost/image/path
+    if not song['coverurl'].startswith('http'):
+        if song['coverurl'][0] == '/':
+            song['coverurl'] = "http://localhost" + song['coverurl']
+        else:
+            song['coverurl'] = "http://localhost/" + song['coverurl']
 
     return song
 
@@ -103,19 +117,6 @@ def cover_art(mode):
         global background
 
         song = moodeCurrentSong()
-
-        # Url's from moode can have the following forms:
-        # http://image/path...
-        # image/path...
-        # /image/path...
-        #
-        # all need to be converted to http://image/path...
-        url = song['coverurl']
-        if not url.startswith('http'):
-            if url[0] == '/':
-                url = "http://localhost" + url
-            else:
-                url = "http://localhost/" + url
 
         if url != curArtUrl:
             import os
