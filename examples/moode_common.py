@@ -116,41 +116,48 @@ def mpdStatus():
         d['Total Time'] = ""
     return d
 
-SongModifiedTime = 0
 
+def song_update_required():
+    SongModifiedTime = 0
+    while True:
+        updateRequired = False
+        t = os.stat('/var/local/www/currentsong.txt').st_mtime
+        if SongModifiedTime != t:
+            SongModifiedTime = t
+            updateRequired = True
+        yield updateRequired
 """
 This function returns an array of text strings, the first being the song title
 
 It will return a blank array if the file has not been updated since the last call.
 """
-def gen_song_lines(forceUpdate=False):
-    global SongModifiedTime
-    songInfo = []
+def gen_moode_status(forceUpdate=False):
+    moodeStatus = {}
 
-    if forceUpdate:
-        SongModifiedTime = 0
-    
-    t = os.stat('/var/local/www/currentsong.txt').st_mtime
-    if SongModifiedTime != t:
-        SongModifiedTime = t
+    moodeStatus['updated'] = False
+    if song_update_required() or forceUpdate:
+        moodeStatus['updated'] = True
         song = moodeCurrentSong()
         status = mpdStatus()
-        if song['state'] != "stop":
-            songInfo.append("{}".format(song['title']))
-            songInfo.append("{}".format(song['artist']))
-            songInfo.append("{} {}".format(song['date'], song['album']).strip())
-            songInfo.append("{} {}".format(song['bitrate'], song['encoded']))
-            songInfo.append("{}/{} {}/{}".format(
+        moodeStatus['details'] = []
+        moodeStatus['artpath'] = ''
+        moodeStatus['title'] = "{}".format(song['title'])
+        moodeStatus['state'] = song['state']
+        if song['state'] == "play":
+            moodeStatus['artpath'] = song['coverurl']
+            moodeStatus['details'].append("{}".format(song['artist']))
+            moodeStatus['details'].append("{} {}".format(song['date'], song['album']).strip())
+            moodeStatus['details'].append("{} {}".format(song['bitrate'], song['encoded']))
+            moodeStatus['details'].append("{}/{} {}/{}".format(
                 status['Track Number'], status['Playlist Length'],
                 status['Current Time'], status['Total Time'],).strip())
         else:
-            songInfo.append("{}".format(song['title']))
-            songInfo.append(cpu_usage())
-            songInfo.append(mem_usage())
-            songInfo.append(gen_ip_addr('eth0'))
-            songInfo.append(gen_ip_addr('wlan0'))
+            moodeStatus['details'].append(cpu_usage())
+            moodeStatus['details'].append(mem_usage())
+            moodeStatus['details'].append(gen_ip_addr('eth0'))
+            moodeStatus['details'].append(gen_ip_addr('wlan0'))
+    return moodeStatus
 
-    return songInfo
 
 def cpu_usage():
     # load average, uptime
