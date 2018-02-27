@@ -17,7 +17,6 @@ from luma.core.render import canvas
 
 from moode_common import gen_moode_status
 
-
 def make_font(name, size):
     font_path = os.path.abspath(os.path.join(
         os.path.dirname(__file__), 'fonts', name))

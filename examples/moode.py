@@ -1,206 +1,198 @@
- #!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Copyright (c) 2014-18 Richard Hull and contributors
 # See LICENSE.rst for details.
-# PYTHON_ARGCOMPLETE_OK
+from __future__ import unicode_literals
 
-"""
-Scrolling artist + song and play/pause indicator
-"""
-
-import os
+import sys
+import subprocess
+import requests
 import time
-from PIL import ImageFont, Image, ImageDraw
+import os.path, os
+from StringIO import StringIO
+from PIL import Image, ImageFont
 from demo_opts import get_device
 from luma.core.render import canvas
-from luma.core.image_composition import ImageComposition, ComposableImage
 
-import subprocess
-
-"""
-Reads moode audio's current song text file and return as a dictionary.
-"""
-def moodeCurrentSong():
-    info = ""
-
-    while info == "":
-        f = open('/var/local/www/currentsong.txt', 'r')
-        info = f.read()
-        f.close()
-
-    return dict([t.split('=') for t in info.strip().split('\n')])
-
-"""
-Reads mpd's status function and return as a dictionary
-"""
-def mpdStatus():
-    status = subprocess.check_output(['mpc'])
-    d = {}
-    d['Song'] = status.split('\n')[0]
-    # [playing] #3/3   0:05/0:39 (12%)
-    state = status.split('\n')[1]
-    d['Play State'] = state.split()[0][1:-1]
-    d['Track Number'] = state.split()[1].split('/')[0][1:] 
-    d['Playlist Length'] = state.split()[1].split('/')[1]
-    d['Current Time'] = state.split()[2].split('/')[0]
-    d['Total Time'] = state.split()[2].split('/')[1]
-    return d
-
-class TextImage():
-    def __init__(self, device, text, font):
-        with canvas(device) as draw:
-            w, h = draw.textsize(text, font)
-        self.image = Image.new(device.mode, (w, h))
-        draw = ImageDraw.Draw(self.image)
-        draw.text((0, 0), text, font=font, fill="white")
-        del draw
-        self.width = w
-        self.height = h
-
-
-class Synchroniser():
-    def __init__(self):
-        self.synchronised = {}
-
-    def busy(self, task):
-        self.synchronised[id(task)] = False
-
-    def ready(self, task):
-        self.synchronised[id(task)] = True
-
-    def is_synchronised(self):
-        for task in self.synchronised.iteritems():
-            if task[1] is False:
-                return False
-        return True
-
-
-class Scroller():
-    WAIT_SCROLL = 1
-    SCROLLING = 2
-    WAIT_REWIND = 3
-    WAIT_SYNC = 4
-
-    def __init__(self, image_composition, rendered_image, scroll_delay, synchroniser):
-        self.image_composition = image_composition
-        self.speed = 1
-        self.image_x_pos = 0
-        self.rendered_image = rendered_image
-        self.image_composition.add_image(rendered_image)
-        self.max_pos = rendered_image.width - image_composition().width
-        self.delay = scroll_delay
-        self.ticks = 0
-        self.state = self.WAIT_SCROLL
-        self.synchroniser = synchroniser
-        self.render()
-        self.synchroniser.busy(self)
-        self.cycles = 0
-        self.must_scroll = self.max_pos > 0
-
-    def __del__(self):
-        self.image_composition.remove_image(self.rendered_image)
-
-    def tick(self):
-
-        # Repeats the following sequence:
-        #  wait - scroll - wait - rewind -> sync with other scrollers -> wait
-        if self.state == self.WAIT_SCROLL:
-            if not self.is_waiting():
-                self.cycles += 1
-                self.state = self.SCROLLING
-                self.synchroniser.busy(self)
-
-        elif self.state == self.WAIT_REWIND:
-            if not self.is_waiting():
-                self.synchroniser.ready(self)
-                self.state = self.WAIT_SYNC
-
-        elif self.state == self.WAIT_SYNC:
-            if self.synchroniser.is_synchronised():
-                if self.must_scroll:
-                    self.image_x_pos = 0
-                    self.render()
-                self.state = self.WAIT_SCROLL
-
-        elif self.state == self.SCROLLING:
-            if self.image_x_pos < self.max_pos:
-                if self.must_scroll:
-                    self.render()
-                    self.image_x_pos += self.speed
-            else:
-                self.state = self.WAIT_REWIND
-
-    def render(self):
-        self.rendered_image.offset = (self.image_x_pos, 0)
-
-    def is_waiting(self):
-        self.ticks += 1
-        if self.ticks > self.delay:
-            self.ticks = 0
-            return False
-        return True
-
-    def get_cycles(self):
-        return self.cycles
-
+from moode_common import gen_moode_status
 
 def make_font(name, size):
     font_path = os.path.abspath(os.path.join(
         os.path.dirname(__file__), 'fonts', name))
     return ImageFont.truetype(font_path, size)
 
-# ------- main
+font = make_font("C&C Red Alert [INET].ttf", 12)
+fontSong = make_font("code2000.ttf", 13)
 
-device = get_device()
+Artwork = {}
+Artwork['path'] = ''
+Artwork['img'] = None
 
-TICK_TIME    = 0.100
-SCROLL_DELAY = 1
-MARGIN       = 2
+def renderArt(draw, artpath, pos, size):
+    global Artwork
+    if Artwork['path'] != artpath:
+        Artwork['path'] = artpath
+        response = requests.get(artpath)
+        img =  Image.open(StringIO(response.content))
+        Artwork['img'] = img.resize(size) \
+            .convert("L") \
+            .convert(device.mode)
+    draw.bitmap(pos, Artwork['img'], fill="white")
+    return Artwork['img'].size[0]
 
-if device.height >= 16:
-    font = make_font("code2000.ttf", 12)
-    fontSong = make_font("code2000.ttf", 14)
-else:
-    font = make_font("pixelmix.ttf", 8)
+# Renders text and returns the greater of width or rendered text width
+def renderText( draw, pos, text, font ):
+    draw.text( pos, text, font=font, fill="white" )
+    w,h = draw.textsize(text, font)
+    return w
 
-image_composition = ImageComposition(device)
+fontSymbol = make_font("fontawesome-webfont.ttf", 12)
+SYMBOL_PLAY = "\uf04b"
+SYMBOL_PAUSE = "\uf04c"
+SYMBOL_STOP = "\uf04d"
+SYMBOL_EJECT = "\uf052"
 
-modified_time = 0
-status_time = 1.0 
+STATES = {
+        'pause': SYMBOL_PAUSE,
+        'play': SYMBOL_PLAY,
+        'stop': SYMBOL_STOP,
+        'default': SYMBOL_EJECT,
+        }
 
-try:
+def renderState( draw, state, deviceSize ):
+    try:
+        text = STATES[state]
+    except:
+        text = STATES['default']
 
-    synchroniser = Synchroniser()
+    w,h = draw.textsize(text, fontSymbol)
+    draw.text( (deviceSize[0]-w,deviceSize[1]-h), text,
+            font=fontSymbol, fill="white" )
+
+class LineScroller():
+    PAUSED = 1
+    SCROLL_FOR = 2
+    SCROLL_BACK = 3
+    PAUSE_TICKS = 3
+
+    def __init__(self, displayWidth):
+        self.displayWidth = displayWidth
+        self.reset()
+
+    def tick(self, textWidth):
+        if self.state == self.PAUSED:
+            if self.delay == 0:
+                if textWidth > self.displayWidth:
+                    self.state = self.SCROLL_FOR
+                elif self.offset > 0:
+                    self.state = self.SCROLL_BACK
+            else:
+                self.delay -= 1
+        elif self.state == self.SCROLL_FOR:
+            if textWidth <= self.displayWidth:
+                self.state = self.PAUSED
+                self.delay = self.PAUSE_TICKS
+            else:
+                self.offset += 1
+        elif self.state == self.SCROLL_BACK:
+            if self.offset == 0:
+                self.state = self.PAUSED
+                self.delay = self.PAUSE_TICKS
+            else:
+                self.offset -= 1
+
+    def getOffset(self):
+        return self.offset
+
+    def reset(self):
+        self.delay = self.PAUSE_TICKS 
+        self.offset = 0
+        self.state = self.PAUSED
+
+def renderLine(draw, pos, line, font):
+    offset = line['scroller'].getOffset()
+    textWidth = renderText(draw, pos, line['text'][offset:]+" ", font)
+    line['scroller'].tick(textWidth)
+    return textWidth
+
+gTitle = {
+        'text': '',
+        'scroller': None,
+        }
+
+gDetails = []
+
+INFO_CYCLES = 10
+ART_CYCLES = 5
+
+DISPLAY_INFO = 1
+DISPLAY_ART = 2
+
+gSongCycleCount = 0
+gSongDisplayState = DISPLAY_INFO
+
+def renderSongInfo(device, margin, forceUpdate):
+    global gTitle, gDetails
+    global gSongCycleCount, gSongDisplayState
+
+    if gTitle['scroller'] == None:
+        gTitle['scroller'] = LineScroller(device.width)
+
+    textWidth = 0
+    ypos = -1
+    moodeStatus = gen_moode_status(forceUpdate)
+
+    if gSongCycleCount >= INFO_CYCLES:
+        if gSongCycleCount >= INFO_CYCLES+ART_CYCLES:
+            gSongCycleCount = 0
+            gSongDisplayState = DISPLAY_INFO
+        elif gSongCycleCount == INFO_CYCLES:
+            gSongDisplayState = DISPLAY_ART
+    gSongCycleCount += 1
+
+    if moodeStatus['updated'] is True:
+        if moodeStatus['title'] != gTitle['text']:
+            gTitle['text'] = moodeStatus['title']
+            gTitle['scroller'].reset()
+
+        for i in range(len(moodeStatus['details'])):
+            if len(gDetails) == i:
+                gDetails.append({
+                    'text': moodeStatus['details'][i],
+                    'scroller': LineScroller(device.width)
+                    })
+            else:
+                if moodeStatus['details'][i] != gDetails[i]['text']:
+                    if len(gDetails[i]['text']) != len(moodeStatus['details'][i]):
+                        gDetails[i]['scroller'].reset()
+                    gDetails[i]['text'] = moodeStatus['details'][i]
+
+    if forceUpdate or moodeStatus['updated']:
+        with canvas(device) as draw:
+            if gSongDisplayState == DISPLAY_INFO or moodeStatus['artpath'] == '':
+                textWidth = renderLine(draw, (margin, ypos), gTitle, fontSong)
+                ypos = 16
+                for line in gDetails:
+                    textWidth = renderLine(draw, (margin, ypos), line, font)
+                    ypos += 12
+                renderState(draw, moodeStatus['state'], (device.width, device.height))
+                textWidth += margin
+            else:
+                if moodeStatus['artpath'] != '':
+                    textWidth += renderArt(draw, moodeStatus['artpath'], (textWidth,0), (device.width,device.height))
+    return textWidth
+
+def main():
+    margin = 3
+    pauseTime = 0.5
+
     while True:
-        new_time = os.stat('/var/local/www/currentsong.txt').st_mtime
-        if modified_time != new_time:
-            msong = moodeCurrentSong()
-            ci_song = ComposableImage(TextImage(device, msong['title'], fontSong).image, position=(MARGIN, -2))
-            ci_artist = ComposableImage(TextImage(device, msong['artist'], font).image, position=(MARGIN, 15))
-            ci_album = ComposableImage(TextImage(device, msong['album'], font).image, position=(MARGIN, 30))
+        updatedTextWidth = renderSongInfo(device, margin, True)
+        time.sleep(pauseTime)
 
-            song = Scroller(image_composition, ci_song, SCROLL_DELAY/TICK_TIME, synchroniser)
-            artist = Scroller(image_composition, ci_artist, SCROLL_DELAY/TICK_TIME, synchroniser)
-            album = Scroller(image_composition, ci_album, SCROLL_DELAY/TICK_TIME, synchroniser)
-            modified_time = new_time
-
-        artist.tick()
-        song.tick()
-        album.tick()
-        time.sleep(TICK_TIME)
-
-        status_time += TICK_TIME
-        if status_time >= 1.0-TICK_TIME:
-            status = mpdStatus()
-            status_time = 0
-
-        with canvas(device, background=image_composition()) as draw:
-            draw.text((MARGIN, 45), "{}of{}  {}/{} ".format(
-                status['Track Number'], status['Playlist Length'],
-                status['Current Time'], status['Total Time']), font=font, fill="white")
-            image_composition.refresh()
-            # draw.rectangle(device.bounding_box, outline="white")
-
-
-except KeyboardInterrupt:
-    pass
+if __name__ == "__main__":
+    try:
+        device = get_device()
+        main()
+    except KeyboardInterrupt:
+        pass
