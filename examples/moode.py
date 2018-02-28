@@ -4,8 +4,6 @@
 # See LICENSE.rst for details.
 from __future__ import unicode_literals
 
-import sys
-import subprocess
 import requests
 import time
 import os.path, os
@@ -30,11 +28,14 @@ Artwork['img'] = None
 
 def renderArt(draw, artpath, pos, size):
     global Artwork
+
     if Artwork['path'] != artpath:
         Artwork['path'] = artpath
         response = requests.get(artpath)
         img =  Image.open(StringIO(response.content))
-        Artwork['img'] = img.resize(size) \
+        aspectRatio = float(img.height)/float(img.width)
+        newSize = (int(size[1]*aspectRatio), size[1])
+        Artwork['img'] = img.resize(newSize) \
             .convert("L") \
             .convert(device.mode)
     draw.bitmap(pos, Artwork['img'], fill="white")
@@ -75,8 +76,9 @@ class LineScroller():
     SCROLL_BACK = 3
     PAUSE_TICKS = 3
 
-    def __init__(self, displayWidth):
+    def __init__(self, displayWidth, scrollBack=True):
         self.displayWidth = displayWidth
+        self.scrollBack = scrollBack
         self.reset()
 
     def tick(self, textWidth):
@@ -85,7 +87,12 @@ class LineScroller():
                 if textWidth > self.displayWidth:
                     self.state = self.SCROLL_FOR
                 elif self.offset > 0:
-                    self.state = self.SCROLL_BACK
+                    if self.scrollBack:
+                        self.state = self.SCROLL_BACK
+                    else:
+                        self.offset = 0
+                        self.state = self.PAUSED
+                        self.delay = self.PAUSE_TICKS
             else:
                 self.delay -= 1
         elif self.state == self.SCROLL_FOR:
@@ -123,7 +130,7 @@ gTitle = {
 gDetails = []
 
 INFO_CYCLES = 10
-ART_CYCLES = 5
+ART_CYCLES = 0 # Disable art
 
 DISPLAY_INFO = 1
 DISPLAY_ART = 2
@@ -136,7 +143,7 @@ def renderSongInfo(device, margin, forceUpdate):
     global gSongCycleCount, gSongDisplayState
 
     if gTitle['scroller'] == None:
-        gTitle['scroller'] = LineScroller(device.width)
+        gTitle['scroller'] = LineScroller(device.width, False)
 
     textWidth = 0
     ypos = -1
@@ -159,7 +166,7 @@ def renderSongInfo(device, margin, forceUpdate):
             if len(gDetails) == i:
                 gDetails.append({
                     'text': moodeStatus['details'][i],
-                    'scroller': LineScroller(device.width)
+                    'scroller': LineScroller(device.width, False)
                     })
             else:
                 if moodeStatus['details'][i] != gDetails[i]['text']:
@@ -179,7 +186,7 @@ def renderSongInfo(device, margin, forceUpdate):
                 textWidth += margin
             else:
                 if moodeStatus['artpath'] != '':
-                    textWidth += renderArt(draw, moodeStatus['artpath'], (textWidth,0), (device.width,device.height))
+                    textWidth += renderArt(draw, moodeStatus['artpath'], (0,0), (device.width,device.height))
     return textWidth
 
 def main():
