@@ -116,6 +116,8 @@ def mpdStatus():
         d['Total Time'] = ""
     return d
 
+def mpdToggle():
+    status = subprocess.check_output(['mpc', 'toggle'])
 
 def song_update_required():
     SongModifiedTime = 0

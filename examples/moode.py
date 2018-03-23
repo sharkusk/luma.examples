@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# Copyright (c) 2014-18 Richard Hull and contributors
-# See LICENSE.rst for details.
 from __future__ import unicode_literals
 
 import requests
@@ -12,7 +10,7 @@ from PIL import Image, ImageFont
 from demo_opts import get_device
 from luma.core.render import canvas
 
-from moode_common import gen_moode_status
+from moode_common import gen_moode_status, mpdToggle
 
 def make_font(name, size):
     font_path = os.path.abspath(os.path.join(
@@ -26,19 +24,30 @@ Artwork = {}
 Artwork['path'] = ''
 Artwork['img'] = None
 
+# set pos[x] = -1 to center
 def renderArt(draw, artpath, pos, size):
     global Artwork
 
     if Artwork['path'] != artpath:
+        print (device.mode)
         Artwork['path'] = artpath
         response = requests.get(artpath)
         img =  Image.open(StringIO(response.content))
         aspectRatio = float(img.height)/float(img.width)
         newSize = (int(size[1]*aspectRatio), size[1])
-        Artwork['img'] = img.resize(newSize) \
-            .convert("L") \
-            .convert(device.mode)
-    draw.bitmap(pos, Artwork['img'], fill="white")
+        # Work around for 1.5" OLED.  Fails due to mode being RGB, but draw requires RGBA
+        if device.mode == "1":
+            Artwork['img'] = img.resize(newSize).convert("L").convert(device.mode)
+        else:
+            # RGBA shows blank screen, L shows properly
+            Artwork['img'] = img.resize(newSize).convert("L")
+    x = pos[0]
+    y = pos[1]
+    if x == -1:
+        x = (size[0]-Artwork['img'].width)/2
+    if y == -1:
+        y = (size[1]-Artwork['img'].height)/2
+    draw.bitmap((x,y), Artwork['img'], fill="white")
     return Artwork['img'].size[0]
 
 # Renders text and returns the greater of width or rendered text width
@@ -129,8 +138,8 @@ gTitle = {
 
 gDetails = []
 
-INFO_CYCLES = 10
-ART_CYCLES = 0 # Disable art
+INFO_CYCLES = 15
+ART_CYCLES = 8 # Disable art by setting to 0
 
 DISPLAY_INFO = 1
 DISPLAY_ART = 2
@@ -186,14 +195,25 @@ def renderSongInfo(device, margin, forceUpdate):
                 textWidth += margin
             else:
                 if moodeStatus['artpath'] != '':
-                    textWidth += renderArt(draw, moodeStatus['artpath'], (0,0), (device.width,device.height))
+                    textWidth += renderArt(draw, moodeStatus['artpath'], (-1,-1), (device.width,device.height))
     return textWidth
+
+import RPi.GPIO as GPIO
+import time
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 def main():
     margin = 3
-    pauseTime = 0.5
+    pauseTime = 0.2
 
     while True:
+        input_state = GPIO.input(4)
+        if input_state == False:
+            print("Button pressed!")
+            mpdToggle()
+
         updatedTextWidth = renderSongInfo(device, margin, True)
         time.sleep(pauseTime)
 
