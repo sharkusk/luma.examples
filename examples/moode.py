@@ -156,7 +156,12 @@ def renderSongInfo(device, margin, forceUpdate):
 
     textWidth = 0
     ypos = -1
-    moodeStatus = gen_moode_status(forceUpdate)
+
+    num_lines = 5
+    if device.height > 64:
+        num_lines = 10
+
+    moodeStatus = gen_moode_status(forceUpdate, num_lines)
 
     if gSongCycleCount >= INFO_CYCLES:
         if gSongCycleCount >= INFO_CYCLES+ART_CYCLES:

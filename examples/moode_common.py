@@ -133,7 +133,7 @@ This function returns an array of text strings, the first being the song title
 
 It will return a blank array if the file has not been updated since the last call.
 """
-def gen_moode_status(forceUpdate=False):
+def gen_moode_status(forceUpdate=False, num_lines=5):
     moodeStatus = {}
 
     moodeStatus['updated'] = False
@@ -141,11 +141,23 @@ def gen_moode_status(forceUpdate=False):
         moodeStatus['updated'] = True
         song = moodeCurrentSong()
         status = mpdStatus()
+
+        show_song_info = False
+        show_system_info = False
+
+        if song['state'] == "play":
+            show_song_info = True
+        else:
+            show_system_info = True
+
+        if num_lines > 5:
+            show_system_info = True
+
         moodeStatus['details'] = []
         moodeStatus['artpath'] = ''
         moodeStatus['title'] = "{}".format(song['title'])
         moodeStatus['state'] = song['state']
-        if song['state'] == "play":
+        if show_song_info:
             moodeStatus['artpath'] = song['coverurl']
             moodeStatus['details'].append("{}".format(song['artist']))
             moodeStatus['details'].append("{} {}".format(song['date'], song['album']).strip())
@@ -153,7 +165,9 @@ def gen_moode_status(forceUpdate=False):
             moodeStatus['details'].append("{}/{} {}/{}".format(
                 status['Track Number'], status['Playlist Length'],
                 status['Current Time'], status['Total Time'],).strip())
-        else:
+        if show_system_info:
+            if num_lines > 5:
+                moodeStatus['details'].append("")
             moodeStatus['details'].append(cpu_usage())
             moodeStatus['details'].append(mem_usage())
             moodeStatus['details'].append(gen_ip_addr('eth0'))
